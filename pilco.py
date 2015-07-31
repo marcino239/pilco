@@ -1,6 +1,8 @@
 import numpy as np
 import scipy as sp
 import GPy
+import sys
+import datetime
 
 from pendubot import Pendubot
 from numpy import pi
@@ -30,12 +32,16 @@ def cost( fi, gp, target_point, x, vx0 ):
 		based on dynamics model gp
 		and trajectory of system variables x
 	'''
+#	print( '.' )
+	sys.stdout.write( '.' )
+	sys.stdout.flush()
+
 	A, b = get_policy_params( fi )
 
 	temp_c = np.zeros( x.shape[ 0 ] )
 	
 	for i in range( x.shape[ 0 ] ):
-		print( 'iteration: {0}'.format( i ) )
+#		print( 'iteration: {0}'.format( i ) )
 
 		if i == 0:
 			mxt_1 = x[ 0:1, : ].T
@@ -98,7 +104,9 @@ def run_on_robot( pbot, A, b, max_time, dt_pbot, dt_pilco ):
 
 
 # init
-kernel = GPy.kern.RBF( input_dim=5,  useGPU=False )
+start_time = datetime.datetime.now()
+print( 'start: ', start_time )
+kernel = GPy.kern.RBF( input_dim=5,  useGPU=True )
 
 # initialise pendubot
 start_state = np.array( [ pi/4., 0., 0., 0. ] )
@@ -155,3 +163,7 @@ while loop_flag:
 	# check if we achived required precision
 	loop_flag = abs( cost_t( points_x[ -1, : ], target_point ) ) < X_PRECISION 
 	epoch += 1
+
+end_time = datetime.datetime.now()
+print( 'end_time: ', end_time )
+
