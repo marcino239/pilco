@@ -1,42 +1,55 @@
 import numpy as np
 import scipy as sp
+import GPy
 
 from pendubot import Pendubot
 from numpy import pi
 from sklearn import gaussian_process
 from scipy.special import erf
-from GPS import GPS
+
+#constants
+MIN_X_SAMPLES = 6
+NUM_XU_SAMPLES = 1000
+
 
 def get_policy_params( fi ):
 	'''
 		returns (A,b)
 	'''
-	return fi[ 0:4 ], fi[ 4 ]
+	temp = np.atleast_2d( fi )
+	return temp[ 0:1, 0:4 ], temp[ 0:1, 4:5 ]
 
 # calculate policy parameters
 def cost_t( x, target_point ):
 	return np.exp( -np.sum( (x-target_point)**2 ) )
 
 
-def cost( fi, gp, target_point, pbot, vx0 ):
+def cost( fi, gp, target_point, x, vx0 ):
 	'''
 		calculates cost for a given policy fi
 		based on dynamics model gp
 		and trajectory of system variables x
 	'''
+	import pdb
+	pdb.set_trace()
+
 	A, b = get_policy_params( fi )
 
-	temp_c = numpy.zeros( points_x.shape[ 0 ] )
+	temp_c = np.zeros( x.shape[ 0 ] )
+	
+	for i in range( x.shape[ 0 ] ):
+		if i == 0:
+			mxt_1 = x[ 0:1, : ].T
+		else:
+			mxt_1 = np.atleast_2d( np.mean( x[ :i, : ], axis=0 ) ).T
 
-	for i in range( points_x.shape[ 0 ] ):
-		mxt_1 = np.atleast_2d( np.avg( points_x[ :i, : ] ) )
 		if i < MIN_X_SAMPLES:
 			vx_1 = vx0
 		else:
-			vx_1 = np.cov( points_x[ :i, : ] )
+			vx_1 = np.cov( x[ :i, : ] )
 
-		mxu = np.row_stack( (mx_1, A * mx_1 + b) )
-		vxu = np.matrix( [ [ vx_1, vx_1 * A.T ], [ A * vx_1, A * vx_1 * A.T ] ] )
+		mxu = np.row_stack( (mxt_1, A.dot( mxt_1 ) + b) )
+		vxu = np.vstack( [ np.hstack( [vx_1, vx_1.dot( A.T ) ] ), np.hstack( [ A.dot( vx_1 ), A.dot( vx_1 ).dot( A.T ) ] ) ] )
 
 		xu = np.random.multivariate_normal( mxu, vxu, NUM_XU_SAMPLES )
 
@@ -86,14 +99,14 @@ def run_on_robot( pbot, A, b, max_time, dt_pbot, dt_pilco ):
 
 
 # init
-gps = GPS( n_outputs = 4, regr = 'constant', theta0 = 100. )
+kernel = GPy.kern.RBF( input_dim=5,  useGPU=True )
 
 # initialise pendubot
 start_state = np.array( [ pi/4., 0., 0., 0. ] )
 target_point = np.array( [0., 1., 0., 2.] )		# observing (x,y) coordinates of 2 ends
 
 # init policy parameters
-fi = np.random.normal( 0.0, 1.0, size=5 )
+fi = np.random.normal( 0.0, 1.0, size=(1,5) )
 
 # sampling period for pbot
 dt_pbot = 0.010
@@ -111,18 +124,17 @@ pbot.step( t_full )
 pbot.get_points( points )
 
 vx0 = np.eye( target_point.shape[0] ) * 0.01
-
 epoch = 0
 loop_flag = True
 while loop_flag:
 	print( 'epoch: {0}'.format( epoch ) )
 	# fit dynamics model: (xt-1,ut-1) -> delta t
 	print( '\tfitting dynamics' )
-	gps.fit( pbot.xu, pbot.delta_x )
+	m = GPy.models.GPRegression( pbot.xu, pbot.delta_x, kernel )
 
 	# minimise cost given policy
 	print( '\toptimising policy' )
-	args = ( gps, target_point, pbot.get_x(), vx0 )
+	args = ( m, target_point, pbot.x, vx0 )
 
 	res = sp.optimize.minimize( cost, fi, args, method='bfgs', jac=False )
 	fi = res.x
