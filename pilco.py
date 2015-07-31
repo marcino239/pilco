@@ -9,7 +9,7 @@ from scipy.special import erf
 
 #constants
 MIN_X_SAMPLES = 6
-NUM_XU_SAMPLES = 1000
+NUM_XU_SAMPLES = 100
 
 
 def get_policy_params( fi ):
@@ -30,14 +30,13 @@ def cost( fi, gp, target_point, x, vx0 ):
 		based on dynamics model gp
 		and trajectory of system variables x
 	'''
-	import pdb
-	pdb.set_trace()
-
 	A, b = get_policy_params( fi )
 
 	temp_c = np.zeros( x.shape[ 0 ] )
 	
 	for i in range( x.shape[ 0 ] ):
+		print( 'iteration: {0}'.format( i ) )
+
 		if i == 0:
 			mxt_1 = x[ 0:1, : ].T
 		else:
@@ -46,22 +45,22 @@ def cost( fi, gp, target_point, x, vx0 ):
 		if i < MIN_X_SAMPLES:
 			vx_1 = vx0
 		else:
-			vx_1 = np.cov( x[ :i, : ] )
+			vx_1 = np.cov( x[ :i, : ], rowvar=0 )
 
 		mxu = np.row_stack( (mxt_1, A.dot( mxt_1 ) + b) )
 		vxu = np.vstack( [ np.hstack( [vx_1, vx_1.dot( A.T ) ] ), np.hstack( [ A.dot( vx_1 ), A.dot( vx_1 ).dot( A.T ) ] ) ] )
 
-		xu = np.random.multivariate_normal( mxu, vxu, NUM_XU_SAMPLES )
+		xu = np.random.multivariate_normal( np.ravel( mxu ), vxu, NUM_XU_SAMPLES )
 
 		# apply dynamics
-		delta = gp.predict( xu )
+		delta = gp.predict( xu )[ 0 ]
 
 		# recover xt
-		xt_1, ut_1 = xu
+		xt_1, ut_1 = ( xu[ :, 0:4 ], xu[ :, 4:5 ] )
 		xt = xt_1 + delta
 
 		# integrate cost
-		temp_c[ i ] = np.apply_along_axis( cos_t, axis=1, arr=xt, args=target_point ).sum()
+		temp_c[ i ] = np.apply_along_axis( cost_t, 1, xt, target_point ).sum()
 
 	return temp_c.sum()
 
@@ -99,7 +98,7 @@ def run_on_robot( pbot, A, b, max_time, dt_pbot, dt_pilco ):
 
 
 # init
-kernel = GPy.kern.RBF( input_dim=5,  useGPU=True )
+kernel = GPy.kern.RBF( input_dim=5,  useGPU=False )
 
 # initialise pendubot
 start_state = np.array( [ pi/4., 0., 0., 0. ] )
@@ -110,7 +109,7 @@ fi = np.random.normal( 0.0, 1.0, size=(1,5) )
 
 # sampling period for pbot
 dt_pbot = 0.010
-t_full = np.arange( 0.0, 40., dt_pbot )
+t_full = np.arange( 0.0, 4., dt_pbot )
 points = np.zeros( ( t_full.shape[0], 4 ) )
 
 # sampling period for PILCO
@@ -137,8 +136,17 @@ while loop_flag:
 	args = ( m, target_point, pbot.x, vx0 )
 
 	res = sp.optimize.minimize( cost, fi, args, method='bfgs', jac=False )
+	if not res.success:
+		print( '\toptimizer failed: ' + res.message )
+		break
+
+	print( '\toptmizer iterations: {0}'.format( res.nit ) )
+
 	fi = res.x
 	A, b = get_policy_params( fi )
+
+	print( 'fi: ', fi )
+	break
 
 	# run on robot, records points
 	pbot = Pendubot( start_state )
